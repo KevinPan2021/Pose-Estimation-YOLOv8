@@ -1,9 +1,10 @@
-application_name = 'Object Detection (YOLO_v8)'
+application_name = 'Pose Estimation (YOLO_v8)'
 
 # pyqt packages
 from PyQt5 import uic
-from PyQt5.QtGui import QPainter, QPixmap, QImage, QColor, QFont
+from PyQt5.QtGui import QPainter, QPixmap, QImage, QColor, QFont, QPen
 from PyQt5.QtWidgets import QMainWindow, QApplication, QMessageBox, QFileDialog
+from PyQt5.QtCore import Qt
 
 import albumentations as album
 from albumentations.pytorch import ToTensorV2 
@@ -15,8 +16,8 @@ from PIL import Image
 import cv2
 import pickle
 
+from main import compute_device, inference, get_color
 from nets.nn import YOLO
-from main import BidirectionalMap, compute_device, inference
 
 
 
@@ -40,8 +41,6 @@ class QT_Action(QMainWindow):
         
         # runtime variable
         self.image_size = 640
-        with open('class_ind_pair.pkl', 'rb') as f:
-            self.class_labels = pickle.load(f)
         self.image = None
         self.model = None
         
@@ -58,6 +57,10 @@ class QT_Action(QMainWindow):
             ToTensorV2() 
         ])
         
+        self.palette, self.kpt_color, self.limb_color, self.skeleton = get_color()
+        with open('categories.pkl', 'rb') as f:
+            self.categories = pickle.load(f)
+            
         # load the model
         self.load_model_action()
         
@@ -65,20 +68,17 @@ class QT_Action(QMainWindow):
     # linking all button/textbox with actions    
     def link_commands(self,):
         self.toolButton_import.clicked.connect(self.import_action)
-        self.toolButton_process.clicked.connect(self.process_action)
+        #self.toolButton_process.clicked.connect(self.process_action)
         
     
     # choosing between models
     def load_model_action(self,):
         # load the model architechture
-        self.model = YOLO(size='m', num_classes=len(self.class_labels))
+        self.model = YOLO(size='n', num_classes=1)
         
-        # loading the best model weights
-        #self.model.load_state_dict(torch.load(self.model.name() + '.pth'))
-        
-        # loading the official weights
-        self.model.load_state_dict(torch.load(f'v8_{self.model.size}.pth')) 
-        
+        # loading the training model weights
+        self.model.load_state_dict(torch.load(self.model.name() + '_pose.pth'))
+            
         # move model to GPU
         self.model = self.model.to(compute_device())
         
@@ -88,7 +88,6 @@ class QT_Action(QMainWindow):
     # clicking the import button action
     def import_action(self,):
         self.label_image.setPixmap(QPixmap())
-        self.label_detection.setPixmap(QPixmap())
         
         # show an "Open" dialog box and return the path to the selected file
         filename, _ = QFileDialog.getOpenFileName(None, "Select file", options=QFileDialog.Options())
@@ -102,79 +101,101 @@ class QT_Action(QMainWindow):
         if filename.endswith('.jpg'):
             self.image = Image.open(filename) 
             self.lineEdit_import.setText(filename)
-            #X = [transform(img)]
-            self.update_display()
         
         # selected the wrong file format
         else:
             show_message(self, title='Load Error', message='Available file format: .jpg')
             self.import_action()
         
+        self.process_action()
         
-    def update_display(self):
-        if not self.image is None:
-            augs = self.transform(image=np.array(self.image))
-            data = augs["image"] 
-            data = data.permute(1,2,0).numpy()
-            data = (data*255).astype(np.uint8)
-            height, width, channels = data.shape
-            q_image = QImage(data.tobytes(), width, height, width*channels, QImage.Format_RGB888)  # Create QImage
-            qpixmap = QPixmap.fromImage(q_image)  # Convert QImage to QPixmap
-            self.label_image.setPixmap(qpixmap)
-            
             
     def process_action(self):
-        if self.image is None:
-            show_message(self, title='Process Error', message='Please load an image first')
-            return
         
         augs = self.transform(image=np.array(self.image))
         data = augs["image"] 
+        data_display = data.permute(1,2,0).numpy()
+        data_display = (data_display*255).astype(np.uint8)
+        height, width, channels = data_display.shape
+        q_image = QImage(data_display.tobytes(), width, height, width*channels, QImage.Format_RGB888)  # Create QImage
+        q_image = q_image.scaled(self.label_image.size(), Qt.KeepAspectRatio)
+        
         
         # move data to GPU
         data = data.to(compute_device())
         
         # model inference
         with torch.no_grad():  # Disable gradient calculation
-            boxes = inference(self.model, data)
+            bboxes, keypoints = inference(self.model, data)
         
-        # convert x to gray image
-        img = data.permute(1,2,0).detach().cpu().numpy()
-        gray_img = np.dot(img[..., :3], [0.2989, 0.5870, 0.1140]) # convert to gray image
-        gray_img = gray_img*255
-        height, width = gray_img.shape
-        q_image = QImage(gray_img.astype(np.uint8).tobytes(), width, height, width, QImage.Format_Grayscale8)  # Create QImage
-        qpixmap = QPixmap.fromImage(q_image)  # Convert QImage to QPixmap
+        # normalizing from [0, 1] to display size (only works for square image)
+        scale = min(self.label_image.height(), self.label_image.width())
+        
+        keypoints[..., :2] *= scale
+        bboxes *= scale
+        
         
         # draw bounding boxes
-        qp = QPainter(qpixmap)
-        
-        # Getting the color map from matplotlib 
-        colour_map = plt.get_cmap("tab20b") 
-        # Getting 20 different colors from the color map for 20 different classes 
-        colors = [colour_map(i) for i in np.linspace(0, 1, len(self.class_labels))] 
-        # Getting the height and width of the image 
-        h, w, _ = img.shape 
-        
-        for box in boxes:
-            # Get the class from the box 
-            score, class_pred, a, b, c, d = box
-            red, green, blue, _ = colors[int(class_pred)]
-            qp.setPen(QColor.fromRgbF(red, green, blue))
-            
-            # draw bounding box
-            qp.drawRect(int(a*w), int(b*h), int(c*w), int(d*h))
-            
-            # Write class label below the upper left corner of the bounding box
-            class_label = self.class_labels.get_value(int(class_pred))
-            qp.setFont(QFont("Arial", 10))  # Set font size and type
-            qp.drawText(int(a*w)+5, int(b*h)+10, class_label)
-    
+        qp = QPainter(q_image)
+        self.draw_bboxes(qp, bboxes)
+        self.draw_keypoints(qp, keypoints)  
+        self.draw_skeletons(qp, keypoints)
         qp.end()
         
+        qpixmap = QPixmap.fromImage(q_image)
         # Display the result in label_detection
-        self.label_detection.setPixmap(qpixmap)
+        self.label_image.setPixmap(qpixmap)
     
+    
+    
+    # draw the bounding boxes on qp
+    def draw_bboxes(self, qp, bboxes):
+        pen = QPen(Qt.red, 5)  # Qt.black for color, 5 for line width
+        qp.setPen(pen)
+        
+        # draw the bounding boxes
+        for bbox in bboxes:
+            # Get the class from the box 
+            centerX, centerY, w, h = bbox
+            
+            x = centerX - w/2
+            y = centerY - h/2
+            
+            # draw bounding box
+            qp.drawRect(int(x), int(y), int(w), int(h))
+    
+    
+    # draw the keypoints on qp
+    def draw_keypoints(self, qp, keypoints):
+        qp.setFont(QFont('Arial', 8))
+        
+        for i in range(keypoints.shape[0]):
+            for j in range(keypoints.shape[1]):
+                x, y, v = keypoints[i, j, :]
+                # Only plot visible keypoints
+                if v > 0:
+                    # Set the pen color for the keypoint
+                    pen = QPen(QColor(self.kpt_color[j][0], self.kpt_color[j][1], self.kpt_color[j][2]))
+                    qp.setPen(pen)
+                    
+                    # Draw the keypoint as a small circle
+                    qp.drawEllipse(int(x) - 3, int(y) - 3, 6, 6)  # Circle with radius 3
+    
+    
+    # Function to draw lines connecting the keypoints based on a skeleton.
+    def draw_skeletons(self, qp, keypoints):
+        for i in range(keypoints.shape[0]):
+            for (start_idx, end_idx), color in zip(self.skeleton, self.limb_color):
+                    x1, y1, v1 = keypoints[i, start_idx-1, :]
+                    x2, y2, v2 = keypoints[i, end_idx-1, :]
+                    # both points are visiable
+                    if v1 > 0 and v2 > 0:
+                        pen = QPen(QColor(color[0], color[1], color[2]), 2)  # Set pen color and line width
+                        qp.setPen(pen)
+                        qp.drawLine(int(x1), int(y1), int(x2), int(y2))  # Draw the line connecting keypoints
+
+                
+                
     
 def main():
     app = QApplication(sys.argv)
