@@ -4,87 +4,50 @@ import matplotlib.patches as patches
 
 
 
-# Function to draw lines connecting the keypoints based on a skeleton.
-def plot_skeletons(ax, keypoints, skeleton, limb_color):
-    for (start_idx, end_idx), color in zip(skeleton, limb_color):
-        x1, y1, v1 = keypoints[start_idx-1, :]
-        x2, y2, v2 = keypoints[end_idx-1, :]
-        # both points are visiable
-        if v1 > 0 and v2 > 0:
-            ax.plot([x1, x2], [y1, y2], color=color/255.0, linewidth=2)
-
-
-# Function to draw the keypoints.
-def plot_keypoints(ax, keypoints, categories, kpt_color):
-    for i in range(keypoints.shape[0]):
-        keypoint = keypoints[i, :]
-        x, y, v = keypoint
-        # Only plot visible keypoints
-        if v > 0:
-        #if True:
-            # Plot scatter point with corresponding color
-            ax.scatter(x, y, color=kpt_color[i]/255.0, s=50)
-            
-            # Add class name to the patch 
-            ax.text(
-                x, y, 
-                s=categories['person'][i], 
-                color="white", 
-                verticalalignment="top", 
-                bbox={"color": kpt_color[i]/255.0, "pad": 0}, 
-                clip_on=True
-            )
-
-# plot bbox (centerX, centerY, w, h)
-def plot_bboxes(ax, bbox):
-    # Plot bounding box
-    centerX, centerY, w, h = bbox
-    
-    x = centerX - w/2
-    y = centerY - h/2
-    
-    # Create a Rectangle patch with the bounding box 
-    rect = patches.Rectangle(
-        (x, y), w, h,
-        linewidth=2, 
-        edgecolor='r', 
-        facecolor="none",
-    ) 
-    
-    # Add the patch to the Axes 
-    ax.add_patch(rect) 
-    
-    
-    
-
 # Function to plot images with bounding boxes and class labels 
-def plot_image(image, bboxes, keypoints, categories, colors):
-    palette, kpt_color, limb_color, COCO_SKELETON = colors
-    
+def plot_image(image, boxes, class_labels): 
+    # Getting the color map from matplotlib 
+    colour_map = plt.get_cmap("tab20b") 
+    # Getting 20 different colors from the color map for 20 different classes 
+    colors = [colour_map(i) for i in np.linspace(0, 1, len(class_labels))] 
+  
     img = np.array(image) 
 
     # Create figure and axes 
-    fig, ax = plt.subplots(1, figsize=(20,20)) 
-    
-    # Set axis limits to match the image size to crop any overflow
-    ax.set_xlim(0, img.shape[1])
-    ax.set_ylim(img.shape[0], 0)  # Invert y-axis to match image coordinates
-    
+    fig, ax = plt.subplots(1, figsize=(10,10)) 
+  
     # Add image to plot 
     ax.imshow(img) 
-    
-    # rescale to image size
-    bboxes *= img.shape[0]
-    keypoints *= img.shape[0]
-    
+  
     # Plotting the bounding boxes and labels over the image 
-    for i in range(bboxes.shape[0]):
-        keypoint = keypoints[i, :]
-        bbox = bboxes[i, :] 
+    for i in range(boxes.shape[0]):
+        box = boxes[i,:]
         
-        plot_keypoints(ax, keypoint, categories, kpt_color)
-        plot_skeletons(ax, keypoint, COCO_SKELETON, limb_color)
-        plot_bboxes(ax, bbox)
+        # Get the class from the box 
+        class_pred = box[1] 
+        
+        # Get the center x and y coordinates and rescale to img shape
+        x, y, w, h = box[2:] * img.shape[0]
+
+        # Create a Rectangle patch with the bounding box 
+        rect = patches.Rectangle( 
+            (x, y), w, h,
+            linewidth=2, 
+            edgecolor=colors[int(class_pred)], 
+            facecolor="none", 
+        ) 
+          
+        # Add the patch to the Axes 
+        ax.add_patch(rect) 
+          
+        # Add class name to the patch 
+        plt.text( 
+            x, y, 
+            s = class_labels.get_value(int(class_pred)), 
+            color="white", 
+            verticalalignment="top", 
+            bbox={"color": colors[int(class_pred)], "pad": 0}, 
+        ) 
     
     plt.axis('off')
     
@@ -94,47 +57,58 @@ def plot_image(image, bboxes, keypoints, categories, colors):
 
 
 # Function to plot images with target and pred boxes, class labels 
-def plot_images(
-        image, target_bboxes, target_keypoints, pred_bboxes, pred_keypoints,
-        categories, colors
-    ): 
+def plot_images(image, target_boxes, pred_boxes, class_labels): 
+    # Getting the color map from matplotlib 
+    colour_map = plt.get_cmap("tab20b") 
+    # Getting 20 different colors from the color map for 20 different classes 
+    colors = [colour_map(i) for i in np.linspace(0, 1, len(class_labels))] 
+  
     img = np.array(image) 
-    palette, kpt_color, limb_color, COCO_SKELETON = colors
-    
+
     # Create figure and axes 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20,20)) 
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10,10)) 
         
-    
-    def plot(ax, bboxes, keypoints, title):
-        # Set axis limits to match the image size to crop any overflow
-        ax.set_xlim(0, img.shape[1])
-        ax.set_ylim(img.shape[0], 0)  # Invert y-axis to match image coordinates
-        
-        # Add image to plot 
+    def plot(ax, boxes, title):
+        # plot target
         ax.imshow(img) 
-        
-        # rescale to image size
-        bboxes *= img.shape[0]
-        keypoints *= img.shape[0]
-        
+      
         # Plotting the bounding boxes and labels over the image 
-        for i in range(bboxes.shape[0]):
+        for i in range(boxes.shape[0]):
+            box = boxes[i,:]
             
-            keypoint = keypoints[i, :]
-            bbox = bboxes[i, :] 
+            # Get the class from the box 
+            class_pred = box[1] 
             
-            plot_keypoints(ax, keypoint, categories, kpt_color)
-            plot_skeletons(ax, keypoint, COCO_SKELETON, limb_color)
-            plot_bboxes(ax, bbox)
-        
-        plt.axis('off')
+            # Get the center x and y coordinates and rescale to img shape
+            x, y, w, h = box[2:] * img.shape[0]
+    
+            # Create a Rectangle patch with the bounding box 
+            rect = patches.Rectangle( 
+                (x, y), w, h,
+                linewidth=2, 
+                edgecolor=colors[int(class_pred)], 
+                facecolor="none", 
+            ) 
+              
+            # Add the patch to the Axes 
+            ax.add_patch(rect) 
+              
+            # Add class name to the patch 
+            ax.text( 
+                x, y, 
+                s = class_labels.get_value(int(class_pred)), 
+                color="white", 
+                verticalalignment="top", 
+                bbox={"color": colors[int(class_pred)], "pad": 0}, 
+            ) 
+        ax.axis('off')
         ax.set_title(title)
     
-    plot(ax1, target_bboxes, target_keypoints, 'target')
-    plot(ax2, pred_bboxes, pred_keypoints, 'pred')
+    plot(ax1, target_boxes, 'target')
+    plot(ax2, pred_boxes, 'pred')
     
-    plt.tight_layout()
-    plt.show()# Display the plot 
+    # Display the plot 
+    plt.show()
     
     
 

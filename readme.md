@@ -1,6 +1,6 @@
-# Pose Estimation with YOLOv8 and PyTorch
+# Object Detection with YOLOv8 and PyTorch
 
-This project aims to perform pose estimation using YOLOv8 with the PyTorch MS-COCO dataset (GUI included).
+This project aims to perform Object Detection using YOLOv8 with the PyTorch MS-COCO dataset (GUI included).
 
 ### Dataset: 
 [MS-COCO](https://cocodataset.org/#download)
@@ -29,10 +29,10 @@ This project aims to perform pose estimation using YOLOv8 with the PyTorch MS-CO
 ├── qt_main.ui
 ├── training.py
 ├── visualization.py
+├── class_ind_pair.pkl
 ├── nets
     ├── nn.py
     ├── summary.py
-    ├── loss.py
 ```
 
 ### Dataset Structure:
@@ -61,7 +61,7 @@ This project aims to perform pose estimation using YOLOv8 with the PyTorch MS-CO
 
 ### Credits:
 
-	https://github.com/jahongir7174/YOLOv8-pose
+	https://github.com/jahongir7174/YOLOv8-pt
 	https://github.com/ultralytics/ultralytics
 
 
