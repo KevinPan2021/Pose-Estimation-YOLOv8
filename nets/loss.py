@@ -3,7 +3,7 @@ import torch
 import math
 from torch.nn.functional import cross_entropy
 
-from nn import make_anchors, wh2xy
+from nn import make_anchors, wh2xy, xy2wh
 
 
 KPT_SIGMA = np.array([
@@ -194,6 +194,7 @@ class PointLoss(torch.nn.Module):
         kpt_loss_factor = kpt_mask.shape[1] / (torch.sum(kpt_mask != 0, dim=1) + 1e-9)
         e = d / (2 * self.sigmas) ** 2 / (area + 1e-9) / 2  # from cocoeval
         return (kpt_loss_factor.view(-1, 1) * ((1 - torch.exp(-e)) * kpt_mask)).mean()
+
     
     
 class ComputeLoss:
@@ -268,8 +269,7 @@ class ComputeLoss:
                 n = matches.sum()
                 if n:
                     gt[j, :n] = box_targets[matches, 1:]
-            x = gt[..., 1:5].mul_(size[[1, 0, 1, 0]])
-            gt[..., 1:5] = wh2xy(x)
+            gt[..., 1:5] = wh2xy(gt[..., 1:5].mul_(size[[1, 0, 1, 0]]))
             
         gt_labels, gt_bboxes = gt.split((1, 4), 2)  # cls, xyxy
         mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0)
@@ -277,12 +277,11 @@ class ComputeLoss:
         pred_bboxes = self.box_decode(anchor_points, pred_distri, self.project)  # xyxy, (b, h*w, 4)
         x_kpt = self.kpt_decode(anchor_points, x_kpt.view(batch_size, -1, *self.kpt_shape))  # (b, h*w, 17, 3)
 
-        assigned_targets = self.assigner(
+        target_bboxes, target_scores, fg_mask, target_gt_idx = self.assigner(
             pred_scores.detach().sigmoid(),
             (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
             anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt
         )
-        target_bboxes, target_scores, fg_mask, target_gt_idx = assigned_targets
 
         target_scores_sum = max(target_scores.sum(), 1)
 
@@ -297,7 +296,8 @@ class ComputeLoss:
                 pred_distri, pred_bboxes, anchor_points, target_bboxes,
                 target_scores, target_scores_sum, fg_mask
             )
-
+            
+            # keypoint loss
             kpt = targets['kpt'].to(self.device).float().clone()
             
             kpt[..., 0] *= size[1]
@@ -310,19 +310,22 @@ class ComputeLoss:
                     gt_kpt[..., 0] /= stride_tensor[fg_mask[i]]
                     gt_kpt[..., 1] /= stride_tensor[fg_mask[i]]
                     # calculate the area based on weight and height
-                    area = target_bboxes[i][fg_mask[i]][:, 2:].prod(1, keepdim=True)
+                    area = xy2wh(target_bboxes[i][fg_mask[i]])[:, 2:].prod(1, keepdim=True)
                     pred_kpt = x_kpt[i][fg_mask[i]]
                     kpt_mask = gt_kpt[..., 2] != 0
+
                     # kpt loss
                     loss[3] += self.kpt_loss(pred_kpt, gt_kpt, kpt_mask, area)
                     if pred_kpt.shape[-1] == 3:
                         loss[4] += self.kpt_bce(pred_kpt[..., 2], kpt_mask.float())  # kpt obj loss
         
+        # scale loss by gain
         loss[0] *= self.cls_gain
         loss[1] *= self.box_gain
         loss[2] *= self.dfl_gain
         loss[3] *= self.kpt_gain / batch_size
         loss[4] *= self.kpt_obj_gain / batch_size
+
         return loss.sum()
 
     @staticmethod
