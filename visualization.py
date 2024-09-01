@@ -158,7 +158,7 @@ def plot_training_curves(train_bbox_mAP, train_kpt_mAP, train_loss, valid_bbox_m
     plt.figure()
     plt.plot(train_kpt_mAP, label='train')
     plt.plot(valid_kpt_mAP, label='valid')
-    plt.title('mAP curves')
+    plt.title('keypoints mAP curves')
     plt.xlabel('epochs')
     plt.ylabel('mAP score')
     plt.legend()
