@@ -23,9 +23,9 @@ class Pose_Dataset(data.Dataset):
         # augment probability
         self.prob = dict()
         
-        # 1% prob mixup, 99% prob mosaic
+        # 1% prob mixup, 90% prob mosaic, 9% neither
         self.prob['mixup'] = 0.01 if augment else 0
-        self.prob['mosaic'] = 1.0 if augment else 0
+        self.prob['mosaic'] = 0.91 if augment else 0
         
         self.prob['hfilp'] = 0.5 if augment else 0
         self.prob['blur'] = 0.01 if augment else 0
@@ -36,7 +36,6 @@ class Pose_Dataset(data.Dataset):
         
         # input image size
         self.input_size = input_size 
-        self.mosaic = False
         
         # Read labels
         self.data = self.load_label(label_dir)
@@ -54,19 +53,19 @@ class Pose_Dataset(data.Dataset):
         
         # mixup augmentation
         if random.random() < self.prob['mixup']:
-            self.mosaic = False
-            img, cls, bbox, keypoint = self.load_mixup(item)
+            img, cls_bbox, keypoint = self.load_mixup(item)
 
         # mosaic augmentation
         elif random.random() < self.prob['mosaic']:
-            self.mosaic = True
-            img, cls, bbox, keypoint = self.load_mosaic(item)
+            img, cls_bbox, keypoint = self.load_mosaic(item)
         # neither mosaic nor mixup
         else:
-            self.mosaic = False
-            img, cls, bbox, keypoint = self.load_image(item)
+            img, cls_bbox, keypoint = self.load_image(item)
         
         # rescale bbox and keypoint to [0, 1]
+        cls = cls_bbox[..., 0:1]
+        bbox = cls_bbox[..., 1:]
+        
         bbox /= self.input_size
         keypoint[..., :2] /= self.input_size
         
@@ -159,24 +158,19 @@ class Pose_Dataset(data.Dataset):
         bboxes[..., 3] += bboxes[..., 1]
         bboxes[..., 4] += bboxes[..., 2]
         
-        cls = bboxes[:, 0:1]
-        
         # Albumentations
         aug = Albumentations(self.input_size, self.prob, mosaic=False)
-        image, bboxes, keypoints, cls = aug(image, bboxes, np.vstack(item['keypoints']), cls)
+        image, bboxes, keypoints = aug(image, bboxes, np.vstack(item['keypoints']))
         
         bboxes = torch.from_numpy(bboxes)
-        
-        bboxes = bboxes[:, 1:]
-        
         keypoints = torch.from_numpy(keypoints).float()
-        cls = torch.from_numpy(cls)
-        return image, cls, bboxes, keypoints
+
+        return image, bboxes, keypoints
     
     
     # load with mosaic (concatenate 4 images to form 1 image)
     def load_mosaic(self, item):
-        box4, kpt4, cls4 = [], [], []
+        box4, kpt4 = [], []
         border = [-self.input_size // 2, -self.input_size // 2]
         image4 = np.full((self.input_size * 2, self.input_size * 2, 3), 0, dtype=np.uint8)
         y1a, y2a, x1a, x2a, y1b, y2b, x1b, x2b = (None, None, None, None, None, None, None, None)
@@ -234,7 +228,6 @@ class Pose_Dataset(data.Dataset):
             pad_h = y1a - y1b
             
             # Labels
-            cls = np.vstack(index['bboxes'])[:, 0:1]
             box = np.vstack(index['bboxes'])
 
             kpt = np.vstack(index['keypoints'])
@@ -244,12 +237,10 @@ class Pose_Dataset(data.Dataset):
                 kpt[..., 0] += pad_w
                 kpt[..., 1] += pad_h
             
-            cls4.append(cls)
             box4.append(box)
             kpt4.append(kpt)
 
         # Concat/clip labels
-        cls4 = np.concatenate(cls4, 0)
         box4 = np.concatenate(box4, 0)
         kpt4 = np.concatenate(kpt4, 0)
         
@@ -265,10 +256,9 @@ class Pose_Dataset(data.Dataset):
 
         # Augment
         aug = Albumentations(self.input_size, self.prob, mosaic=True)
-        image4, box4, kpt4, cls4 = aug(image4, box4, kpt4.reshape(-1, 3), cls4)
-        box4 = box4[..., 1:]
+        image4, box4, kpt4 = aug(image4, box4, kpt4.reshape(-1, 3))
         
-        return image4, torch.tensor(cls4), torch.tensor(box4), torch.tensor(kpt4)
+        return image4, torch.tensor(box4), torch.tensor(kpt4)
 
         
     
@@ -283,27 +273,23 @@ class Pose_Dataset(data.Dataset):
         bboxes1 = np.vstack(item1['bboxes'])
         bboxes1[..., 3] += bboxes1[..., 1]
         bboxes1[..., 4] += bboxes1[..., 2]
-        cls1 = bboxes1[..., 0:1]
         aug = Albumentations(self.input_size, self.prob, mosaic=False)
-        image1, bboxes1, kpt1, cls1 = aug(image1, bboxes1, np.vstack(item1['keypoints']), cls1)
+        image1, bboxes1, kpt1 = aug(image1, bboxes1, np.vstack(item1['keypoints']))
         
         bboxes2 = np.vstack(item2['bboxes'])
         bboxes2[..., 3] += bboxes2[..., 1]
         bboxes2[..., 4] += bboxes2[..., 2]
-        cls2 = bboxes2[..., 0:1]
         aug = Albumentations(self.input_size, self.prob, mosaic=False)
-        image2, bboxes2, kpt2, cls2 = aug(image2, bboxes2, np.vstack(item2['keypoints']), cls2)
+        image2, bboxes2, kpt2 = aug(image2, bboxes2, np.vstack(item2['keypoints']))
         
         # mixup
         alpha = np.random.beta(32.0, 32.0)  # mix-up ratio, alpha=beta=32.0
         image = image1 * alpha + image2 * (1 - alpha)
         
         bboxes = torch.from_numpy(np.concatenate((bboxes1, bboxes2), 0))
-        clss = torch.from_numpy(np.concatenate((cls1, cls2), 0))
         keypoints = torch.from_numpy(np.concatenate((kpt1, kpt2), 0))
         
-        bboxes = bboxes[:, 1:]
-        return image, clss, bboxes, keypoints
+        return image, bboxes, keypoints
     
        
         
@@ -352,7 +338,7 @@ class Albumentations:
             keypoint_params=album.KeypointParams(format='xy', remove_invisible=False) 
         )
 
-    def __call__(self, image, label_bboxes, keypoints, cls):
+    def __call__(self, image, label_bboxes, keypoints):
         # add idx to keep track of which bounding is removed
         bboxes = np.zeros((label_bboxes.shape[0], 6))
         bboxes[:, :4] = label_bboxes[:, 1:]
@@ -366,12 +352,11 @@ class Albumentations:
         kps, visible = x['keypoints'], keypoints[:, -1]
         
         # Remove keypoints that correspond to removed bounding boxes
-        filtered_keypoints, filtered_visible, filtered_cls = [], [], []
+        filtered_keypoints, filtered_visible = [], []
         for bbox in x['bboxes']:
             i = int(bbox[-1])
             filtered_keypoints.append(kps[i * 17:(i + 1) * 17])
             filtered_visible.append(visible[i * 17:(i + 1) * 17])
-            filtered_cls.append(cls[i])
 
         image = x['image']
         bboxes = np.array(x['bboxes'])
@@ -400,7 +385,7 @@ class Albumentations:
         if keypoints.size == 0:
             keypoints = np.zeros((0, 17, 3))
         
-        return image, bboxes, keypoints, np.array(filtered_cls)
+        return image, bboxes, keypoints
     
     
     def was_image_flipped(self, replay):
