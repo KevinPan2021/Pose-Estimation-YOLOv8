@@ -269,6 +269,7 @@ def backpropagation(data_loader, model, optimizer, scaler, ema, mAP_skip=1):
     
     criterion = ComputeLoss(model)
     device = next(model.parameters()).device
+    accumulate = max(round(64 / data_loader.batch_size), 1)
     epoch_loss = 0.0
     epoch_bbox_mAP = 0.0
     epoch_keypoint_mAP = 0.0
@@ -276,6 +277,7 @@ def backpropagation(data_loader, model, optimizer, scaler, ema, mAP_skip=1):
     with tqdm(total=len(data_loader)) as pbar:
         # Iterate over the dataset
        for i, (X, Y) in enumerate(data_loader):
+           
            # move to device
            X = X.to(device)
   
@@ -295,23 +297,19 @@ def backpropagation(data_loader, model, optimizer, scaler, ema, mAP_skip=1):
            epoch_bbox_mAP += bbox_mAP.item()
            epoch_keypoint_mAP += keypoints_mAP.item()
            
-           # Reset gradients
-           optimizer.zero_grad()
-           
            # Backpropagate the loss
            scaler.scale(loss_score).backward()
            
-           # clip gradients
-           #clip_gradients(model)  
-           
-           # Optimization step
-           scaler.step(optimizer)
-           
-           # Updates the scale for next iteration.
-           scaler.update()
-           
-           # update EMA
-           ema.update(model)
+           # Optimize
+           if i % accumulate == 0:
+               scaler.unscale_(optimizer)  # unscale gradients
+               clip_gradients(model)  # clip gradients
+               scaler.step(optimizer)  # optimizer.step
+               scaler.update()
+               optimizer.zero_grad()
+                    
+               # update EMA
+               ema.update(model)
                         
            # Update tqdm description with loss and accuracy
            pbar.set_postfix({
@@ -335,11 +333,11 @@ def backpropagation(data_loader, model, optimizer, scaler, ema, mAP_skip=1):
 def model_training(train_loader, valid_loader, model):
     # Define hyperparameters
     n_epochs = 100
-    warmup_steps = 3
+    warmup_epochs = 3
     
     # Learning rate for training
     lr0 = 1e-2 # initial learning rate (SGD=1E-2, Adam=1E-3)
-    lrf = 1e-2 # final OneCycleLR learning rate (lr0 * lrf)
+    lrf = 5e-2 # final OneCycleLR learning rate (lr0 * lrf)
 
     warmup_bias_lr = 0.10   # warmup initial bias lr
     momentum = 0.937
@@ -384,8 +382,8 @@ def model_training(train_loader, valid_loader, model):
         print(f"Epoch: {epoch+1}/{n_epochs}")
         
         # Warmup epoch
-        if epoch <= warmup_steps:
-            xp = [0, warmup_steps]
+        if epoch <= warmup_epochs:
+            xp = [0, warmup_epochs]
             for j, y in enumerate(optimizer.param_groups):
                 if j == 0:
                     y['lr'] = np.interp(epoch, xp, [warmup_bias_lr, y['initial_lr'] * lr(epoch)])
@@ -393,14 +391,17 @@ def model_training(train_loader, valid_loader, model):
                     y['lr'] = np.interp(epoch, xp, [0.0, y['initial_lr'] * lr(epoch)])
                 if 'momentum' in y:
                     y['momentum'] = np.interp(epoch, xp, [warmup_momentum, momentum])
-        
+                    
         
         # turning off the mosaic augmentation during last 10 epochs
         if epoch == n_epochs - 10:
             train_loader.dataset.close_mosaic()
         
+        # initialize grad
+        optimizer.zero_grad()
+        
         # back and forward propagation
-        train_bbox_mAP, train_kpt_mAP, train_loss = backpropagation(train_loader, model, optimizer, scaler, ema, mAP_skip=8)
+        train_bbox_mAP, train_kpt_mAP, train_loss = backpropagation(train_loader, model, optimizer, scaler, ema, mAP_skip=12)
         valid_bbox_mAP, valid_kpt_mAP, valid_loss = feedforward(valid_loader, model)
 
         # Step the scheduler after each epoch
