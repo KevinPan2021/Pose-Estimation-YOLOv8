@@ -8,7 +8,6 @@ from PyQt5.QtCore import Qt
 
 import albumentations as album
 from albumentations.pytorch import ToTensorV2 
-import matplotlib.pyplot as plt
 import sys
 import numpy as np
 import torch
@@ -109,44 +108,70 @@ class QT_Action(QMainWindow):
         
         self.process_action()
         
-            
+    
     def process_action(self):
+        w, h = self.image.width, self.image.height
         
+        # Apply transformations to the image
         augs = self.transform(image=np.array(self.image))
-        data = augs["image"] 
-        data_display = data.permute(1,2,0).numpy()
-        data_display = (data_display*255).astype(np.uint8)
+        data = augs["image"]
+        
+        # Convert tensor to a displayable format
+        data_display = data.permute(1, 2, 0).numpy()
+        data_display = (data_display * 255).astype(np.uint8)
+        
+        # calculate the padding and crop the image
+        if w < h:  # Vertical padding (image originally taller)
+            pad = int((1 - w / h) * self.image_size / 2)
+            data_display = data_display[:, pad:-pad, :]
+        elif w > h:  # Horizontal padding (image originally wider)
+            pad = int((1 - h / w) * self.image_size / 2)
+            data_display = data_display[pad:-pad, :, :]
+        
         height, width, channels = data_display.shape
-        q_image = QImage(data_display.tobytes(), width, height, width*channels, QImage.Format_RGB888)  # Create QImage
+        q_image = QImage(data_display.tobytes(), width, height, width * channels, QImage.Format_RGB888)
         q_image = q_image.scaled(self.label_image.size(), Qt.KeepAspectRatio)
         
-        
-        # move data to GPU
+        # Move data to GPU
         data = data.to(compute_device())
         
-        # model inference
-        with torch.no_grad():  # Disable gradient calculation
+        # Model inference
+        with torch.no_grad():
             bboxes, keypoints = inference(self.model, data)
         
-        # normalizing from [0, 1] to display size (only works for square image)
-        scale = min(self.label_image.height(), self.label_image.width())
+        # subtract the padding for keypoints and bboxes        
+        if w < h:
+            pad = (1 - w / h) /2
+            keypoints[..., 0] -= pad # unpad keypoint x
+            bboxes[..., 0] -= pad # unpad bbox centerX
         
+        elif w > h:
+            pad = (1 - h / w) /2
+            scale = min(w/h, self.label_image.width() / self.label_image.height())
+            
+            keypoints[..., 1] -= pad # unpad keypoint y
+            bboxes[..., 1] -= pad # unpad bbox centerY
+            
+            keypoints[..., :2] *= scale # scale keypoint
+            bboxes *= scale # scale bboxes
+        
+            
+        # Normalize bounding boxes and keypoints from [0, 1] to the display size
+        scale = min(self.label_image.height(), self.label_image.width())
         keypoints[..., :2] *= scale
         bboxes *= scale
         
-        
-        # draw bounding boxes
+        # Draw bounding boxes, keypoints, and skeletons
         qp = QPainter(q_image)
         self.draw_bboxes(qp, bboxes)
-        self.draw_keypoints(qp, keypoints)  
+        self.draw_keypoints(qp, keypoints)
         self.draw_skeletons(qp, keypoints)
         qp.end()
         
         qpixmap = QPixmap.fromImage(q_image)
         # Display the result in label_detection
         self.label_image.setPixmap(qpixmap)
-    
-    
+
     
     # draw the bounding boxes on qp
     def draw_bboxes(self, qp, bboxes):
@@ -194,7 +219,6 @@ class QT_Action(QMainWindow):
                         qp.setPen(pen)
                         qp.drawLine(int(x1), int(y1), int(x2), int(y2))  # Draw the line connecting keypoints
 
-                
                 
     
 def main():
