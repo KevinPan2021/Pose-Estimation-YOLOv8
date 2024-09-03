@@ -2,7 +2,7 @@
 
 This project aims to perform pose estimation using YOLOv8 with the PyTorch MS-COCO dataset (GUI included).
 
-![Pose Estimation](External/GUI.png)
+![Pose Estimation](external/GUI.png)
 
 ### Dataset: 
 [MS-COCO](https://cocodataset.org/#download)
