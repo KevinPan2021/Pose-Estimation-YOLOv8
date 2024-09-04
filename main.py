@@ -6,6 +6,7 @@ import os
 import numpy as np
 import pickle
 import random
+#import torch_tensorrt
 sys.path.append(os.path.join(os.path.dirname(__file__), 'nets'))
 
 from nn import YOLO, non_max_suppression, xy2wh
@@ -58,6 +59,7 @@ def convert_pt_to_pth(path):
     model.half()
     torch.save(model.state_dict(), path.split('/')[-1] + 'h')
 
+    
 
 # model inference
 @torch.no_grad
@@ -72,10 +74,10 @@ def inference(model, img):
     
     with autocast(dtype=torch.float16):
         output, _ = model(img)
-    
+
     # apply nms
     # pred shape -> batch_size * torch.Size([(num_bbox, 6)])
-    output = non_max_suppression(output, model.head.nc, 0.4, 0.65)[0]
+    output = non_max_suppression(output, model.head.nc, 0.6, 0.65)[0]
     
     if output.size():
         box_output = output[:, :6]
@@ -85,10 +87,6 @@ def inference(model, img):
         kps_output = output[:, 6:]
 
     _, _, w, h = img.shape
-    
-    # convert to numpy
-    box_output = box_output.cpu().numpy()
-    kps_output = kps_output.cpu().numpy()
 
     # clip to range and rescale
     box_output = xy2wh(box_output[:, :4])
@@ -98,6 +96,10 @@ def inference(model, img):
     kps_output[..., 0] = kps_output[..., 0].clip(0, w - 1E-3) / w
     kps_output[..., 1] = kps_output[..., 1].clip(0, w - 1E-3) / h
     
+    # convert to numpy
+    box_output = box_output.cpu().numpy()
+    kps_output = kps_output.cpu().numpy()
+
     return box_output, kps_output
     
 

@@ -64,9 +64,7 @@ class Pose_Dataset(data.Dataset):
         
         # rescale bbox and keypoint to [0, 1]
         cls = cls_bbox[..., 0:1]
-        bbox = cls_bbox[..., 1:]
-        
-        bbox /= self.input_size
+        bbox = cls_bbox[..., 1:] / self.input_size
         keypoint[..., :2] /= self.input_size
         
         return img, cls, bbox, keypoint, torch.zeros(bbox.shape[0])
@@ -114,8 +112,7 @@ class Pose_Dataset(data.Dataset):
                 continue
             
             # extract bbox
-            bbox = annotation['bbox']
-            bbox = [0] + bbox # add class label (person)
+            bbox = [0] + annotation['bbox'] # add class label (person)
             
             # width and height has to be greater than 0
             if not (bbox[-2] > 0 and bbox[-1] > 0):
@@ -155,8 +152,7 @@ class Pose_Dataset(data.Dataset):
         
         # convert from [cls, x_min, y_min, w, h] to [cls, x_min, y_min, x_max, y_max]
         bboxes = np.vstack(item['bboxes'])
-        bboxes[..., 3] += bboxes[..., 1]
-        bboxes[..., 4] += bboxes[..., 2]
+        bboxes[..., 3:] += bboxes[..., 1:3]
         
         # Albumentations
         aug = Albumentations(self.input_size, self.prob, mosaic=False)
@@ -173,7 +169,7 @@ class Pose_Dataset(data.Dataset):
         box4, kpt4 = [], []
         border = [-self.input_size // 2, -self.input_size // 2]
         image4 = np.full((self.input_size * 2, self.input_size * 2, 3), 0, dtype=np.uint8)
-        y1a, y2a, x1a, x2a, y1b, y2b, x1b, x2b = (None, None, None, None, None, None, None, None)
+        y1a, y2a, x1a, x2a, y1b, y2b, x1b, x2b = None, None, None, None, None, None, None, None
 
         xc = int(random.uniform(-border[0], 2 * self.input_size + border[1]))
         yc = int(random.uniform(-border[0], 2 * self.input_size + border[1]))
@@ -229,7 +225,6 @@ class Pose_Dataset(data.Dataset):
             
             # Labels
             box = np.vstack(index['bboxes'])
-
             kpt = np.vstack(index['keypoints'])
             if len(box):
                 box[..., 1] += pad_w
@@ -245,9 +240,7 @@ class Pose_Dataset(data.Dataset):
         kpt4 = np.concatenate(kpt4, 0)
         
         # convert from [cls, x_min, y_min, w, h] to [cls, x_min, y_min, x_max, y_max]
-        box4[..., 3] += box4[..., 1]
-        box4[..., 4] += box4[..., 2]
-        # normalize to [0,1]
+        box4[..., 3:] += box4[..., 1:3]
 
         # clip (x_min, y_min) to [0, size - epsilon]
         # clip (x_max, y_max) to [epsilon, size]
@@ -270,19 +263,16 @@ class Pose_Dataset(data.Dataset):
         image2 = np.array(Image.open(os.path.join(self.image_dir, item2['file_name'])).convert("RGB"))
         
         # Albumentations
-        bboxes1 = np.vstack(item1['bboxes'])
-        bboxes1[..., 3] += bboxes1[..., 1]
-        bboxes1[..., 4] += bboxes1[..., 2]
         aug = Albumentations(self.input_size, self.prob, mosaic=False)
+        bboxes1 = np.vstack(item1['bboxes'])
+        bboxes1[..., 3:] += bboxes1[..., 1:3]
         image1, bboxes1, kpt1 = aug(image1, bboxes1, np.vstack(item1['keypoints']))
         
         bboxes2 = np.vstack(item2['bboxes'])
-        bboxes2[..., 3] += bboxes2[..., 1]
-        bboxes2[..., 4] += bboxes2[..., 2]
-        aug = Albumentations(self.input_size, self.prob, mosaic=False)
+        bboxes2[..., 3:] += bboxes2[..., 1:3]
         image2, bboxes2, kpt2 = aug(image2, bboxes2, np.vstack(item2['keypoints']))
         
-        # mixup
+        # image mixup
         alpha = np.random.beta(32.0, 32.0)  # mix-up ratio, alpha=beta=32.0
         image = image1 * alpha + image2 * (1 - alpha)
         
@@ -339,6 +329,8 @@ class Albumentations:
         )
 
     def __call__(self, image, label_bboxes, keypoints):
+        #print('shape', label_bboxes.shape, keypoints.shape)
+        #exit()
         # add idx to keep track of which bounding is removed
         bboxes = np.zeros((label_bboxes.shape[0], 6))
         bboxes[:, :4] = label_bboxes[:, 1:]
@@ -346,8 +338,8 @@ class Albumentations:
         bboxes[:, -1] += np.arange(bboxes.shape[0])
         
         # Apply the transformations
-        x = self.transform(image=image, bboxes=bboxes, class_labels=bboxes[:, 0], keypoints=keypoints[:, :2])
-
+        x = self.transform(image=image, bboxes=bboxes, class_labels=bboxes[:, 0], keypoints=keypoints[..., :2])
+        
         # Filter keypoints invisible
         kps, visible = x['keypoints'], keypoints[:, -1]
         
@@ -374,7 +366,7 @@ class Albumentations:
 
         # turn the keypoint outside bound to invisible
         keypoints = self.filter_keypoints(keypoints, bboxes)
-               
+
         # convert bbox from xy to centerXY
         if bboxes.size != 0:
             bboxes[:, 1:] = xy2wh(bboxes[:, 1:])

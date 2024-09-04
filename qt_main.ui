@@ -104,7 +104,7 @@
          </widget>
         </item>
         <item>
-         <widget class="QToolButton" name="toolButton_import_2">
+         <widget class="QToolButton" name="toolButton_camera">
           <property name="minimumSize">
            <size>
             <width>120</width>
@@ -129,10 +129,32 @@
 		stop:1 rgba(91, 99, 120, 255));
 	border: 2px solid black;
 	border-radius: 8px;
+}
+
+QToolButton:checked {
+	color:white; 
+	background-color: rgba(121, 129, 150, 255);
+	border: 2px solid black;
+	border-radius: 8px;
+	padding: 0;
+}
+
+QToolButton:disabled {
+	color:gray; 
+	background-color: rgba(32, 38, 52, 255);
+	border: 2px solid black;
+	border-radius: 8px;
+	padding: 0;
 }</string>
           </property>
           <property name="text">
            <string>Camera</string>
+          </property>
+          <property name="checkable">
+           <bool>true</bool>
+          </property>
+          <property name="checked">
+           <bool>false</bool>
           </property>
          </widget>
         </item>
